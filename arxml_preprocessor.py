@@ -1,4 +1,3 @@
-
 import xml.etree.ElementTree as ET
 import re
 import os
@@ -6,7 +5,6 @@ import json
 from collections import defaultdict
 import pandas as pd
 from difflib import get_close_matches
-
 
 NS = {'autosar': 'http://autosar.org/schema/r4.0'}
 
@@ -22,7 +20,6 @@ def log_debug(msg):
 def normalize_name(name):
     return name.replace("SomeIp", "").replace("_SI", "").replace("_", "").lower()
 
-
 def parse_service_interfaces(service_path):
     service_map = {}
     tree = ET.parse(service_path)
@@ -31,7 +28,7 @@ def parse_service_interfaces(service_path):
         si_name = si.find('autosar:SHORT-NAME', NS).text
         sid = si.find('.//autosar:SERVICE-INTERFACE-ID', NS)
 
-        # Use EVENT-DEPLOYMENTS instead of SOMEIP-EVENT to fetch EVENT-IDs correctly
+       
         event_deployments = si.findall('.//autosar:EVENT-DEPLOYMENTS/autosar:SOMEIP-EVENT-DEPLOYMENT', NS)
         event_ids = []
         for ev in event_deployments:
@@ -47,12 +44,12 @@ def parse_service_interfaces(service_path):
         }
     return service_map
 
-
 def infer_cycle_time_from_name(pdu_name):
     match = re.search(r'_([0-9]{2,4})$', pdu_name)
     if match:
         return str(float(match.group(1)) / 1000)
     return "0.0"
+
 def parse_rbs_pdus(rbs_path):
     tree = ET.parse(rbs_path)
     root = tree.getroot()
@@ -104,7 +101,6 @@ def parse_rbs_pdus(rbs_path):
         }
     return pdu_map
 
-
 def generate_pdu_metadata(service_data, pdu_data):
     messages = {}
     for pdu_name, pdu_info in pdu_data.items():
@@ -125,51 +121,65 @@ def generate_pdu_metadata(service_data, pdu_data):
 def extract_signal_compu_methods(rbs_path):
     tree = ET.parse(rbs_path)
     root = tree.getroot()
-    compu_methods = {}
+    compu_methods = []
     
-    # Find all COMPU-METHOD elements
+  
     for compu_method in root.findall('.//autosar:COMPU-METHOD', NS):
         compu_name = compu_method.find('autosar:SHORT-NAME', NS).text
-        lower_limit = "0"  # Default if not found
-        # Look for LOWER-LIMIT in COMPU-INTERNAL-TO-PHYS
-        internal_to_phys = compu_method.find('.//autosar:COMPU-INTERNAL-TO-PHYS', NS)
-        if internal_to_phys is not None:
-            limit = internal_to_phys.find('autosar:COMPU-CONST/autosar:LOWER-LIMIT', NS)
-            if limit is not None:
-                lower_limit = limit.text
-        compu_methods[compu_name] = lower_limit
+      
+        for scale in compu_method.findall('.//autosar:COMPU-INTERNAL-TO-PHYS/autosar:COMPU-SCALES/autosar:COMPU-SCALE', NS):
+            lower_limit_elem = scale.find('autosar:LOWER-LIMIT', NS)
+            lower_limit = lower_limit_elem.text if lower_limit_elem is not None else '0'
+        
+            try:
+                hex_value = f"0x{int(lower_limit):X}" if lower_limit.isdigit() else '0x0'
+            except ValueError:
+                hex_value = '0x0'
+            vt_elem = scale.find('autosar:COMPU-CONST/autosar:VT', NS)
+            vt = vt_elem.text if vt_elem is not None else 'No Description'
+            compu_methods.append({
+                'signal_name': compu_name,
+                'raw_value': lower_limit,
+                'hex_value': hex_value,
+                'description': vt
+            })
     
-    # Map signals to their COMPU-METHOD
+   
     signal_compu_map = {}
     for signal in root.findall('.//autosar:I-SIGNAL', NS):
         signal_name = signal.find('autosar:SHORT-NAME', NS).text
         compu_method_ref = None
-        # Look for DATA-TYPE or PHYSICAL-PROPS referencing COMPU-METHOD
+    
         phys_props = signal.find('.//autosar:PHYSICAL-PROPS', NS)
         if phys_props is not None:
             data_type_ref = phys_props.find('autosar:SW-DATA-DEF-PROPS/autosar:DATA-TYPE-REF', NS)
             if data_type_ref is not None:
-                # Find DATA-TYPE and its COMPU-METHOD
+                #
                 data_type_path = data_type_ref.text
                 data_type = root.find(f".//autosar:APPLICATION-DATA-TYPE[@DEST='APPLICATION-PRIMITIVE-DATA-TYPE' and .='{data_type_path}']", NS)
                 if data_type is not None:
                     compu_method_ref = data_type.find('.//autosar:COMPU-METHOD-REF', NS)
         if compu_method_ref is None:
-            # Fallback: Check SW-DATA-DEF-PROPS directly
+            
             sw_data_def = signal.find('.//autosar:SW-DATA-DEF-PROPS', NS)
             if sw_data_def is not None:
                 compu_method_ref = sw_data_def.find('autosar:COMPU-METHOD-REF', NS)
         
         if compu_method_ref is not None:
             compu_name = compu_method_ref.text.split('/')[-1]
-            lower_limit = compu_methods.get(compu_name, "0")
-            signal_compu_map[signal_name] = f"{lower_limit}.{compu_name}"
+           
+            for compu in compu_methods:
+                if compu['signal_name'] == compu_name:
+                    signal_compu_map[signal_name] = f"{compu['raw_value']}.{compu_name}"
+                    break
+            else:
+                signal_compu_map[signal_name] = "0.NoCompuMethod"
         else:
             signal_compu_map[signal_name] = "0.NoCompuMethod"
     
-    return signal_compu_map
+    return compu_methods, signal_compu_map
 
-# Function to mimic infer_cycle_time_from_name for UI display
+
 def infer_cycle_time_details(pdu_name):
     match = re.search(r'_([0-9]{2,4})$', pdu_name)
     if match:
