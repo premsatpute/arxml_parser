@@ -7,7 +7,9 @@ from arxml_preprocessor import (
     parse_service_interfaces,
     parse_rbs_pdus,
     generate_pdu_metadata,
-    log_debug,infer_cycle_time_details,
+    log_debug,
+    infer_cycle_time_details,
+    extract_signal_compu_methods,
     NS,
     OUTPUT_JSON,
     DEBUG_LOG
@@ -39,7 +41,7 @@ with col2:
 
 # Tabs for Viewing Data
 if service_file or rbs_file:
-    tabs = st.tabs(["Generate metadata JSON","Service Interfaces", "PDU Data",  "Debug Log"])
+    tabs = st.tabs(["Generate metadata JSON", "Service Interfaces", "PDU Data", "Debug Log", "Signal Computation Methods"])
 
     # Save uploaded files to temporary paths
     with tempfile.NamedTemporaryFile(delete=False, suffix=".arxml") as tmp_service:
@@ -53,7 +55,7 @@ if service_file or rbs_file:
             tmp_rbs.write(rbs_file.getvalue())
 
     # Service Interfaces Tab
-    with tabs[2]:
+    with tabs[1]:
         if service_file:
             st.subheader("Parsed Service Interfaces")
             with st.spinner("Parsing service interfaces..."):
@@ -67,10 +69,9 @@ if service_file or rbs_file:
                     st.error(f"Error parsing service interfaces: {str(e)}")
                     log_debug(f"UI Error: Parsing service interfaces failed - {str(e)}")
 
-    
-    with tabs[1]:
-        with tabs[1]:
-         if rbs_file:
+    # PDU Data Tab
+    with tabs[2]:
+        if rbs_file:
             st.subheader("Parsed PDU Data")
             with st.spinner("Parsing PDU data..."):
                 try:
@@ -115,6 +116,7 @@ if service_file or rbs_file:
                 except Exception as e:
                     st.error(f"Error parsing PDU data: {str(e)}")
                     log_debug(f"UI Error: Parsing PDU data failed - {str(e)}")
+
     # Generated Metadata Tab
     with tabs[0]:
         st.subheader("Generated PDU Metadata")
@@ -183,6 +185,46 @@ if service_file or rbs_file:
         else:
             st.info("No debug log available yet.")
 
+    # Signal Computation Methods Tab
+    with tabs[4]:
+        st.subheader("Signal Computation Methods")
+        if rbs_file:
+            with st.spinner("Parsing computation methods..."):
+                try:
+                    compu_methods, _ = extract_signal_compu_methods(rbs_path)
+                    if compu_methods:
+                        df = pd.DataFrame(compu_methods)
+                        df = df[['signal_name', 'raw_value', 'hex_value', 'description']]
+                        df.columns = ['Signal Name', 'Raw Value', 'Hex Value', 'Description']
+                        st.dataframe(df, use_container_width=True)
+                        st.info(f"Found {len(compu_methods)} computation method entries.")
+
+                        # Download as CSV
+                        csv_filename = st.text_input(
+                            "Output CSV Filename",
+                            value="signal_compu_methods.csv",
+                            help="Enter the filename for the generated CSV file (e.g., signal_compu_methods.csv)"
+                        )
+                        if not csv_filename.endswith(".csv"):
+                            csv_filename += ".csv"
+
+                        # Convert DataFrame to CSV
+                        csv_data = df.to_csv(index=False).encode('utf-8')
+                        st.download_button(
+                            label="Download Signal Computation Methods CSV",
+                            data=csv_data,
+                            file_name=csv_filename,
+                            mime="text/csv",
+                            key="download_csv"
+                        )
+                    else:
+                        st.warning("No computation methods found in the RBS file.")
+                except Exception as e:
+                    st.error(f"Error parsing computation methods: {str(e)}")
+                    log_debug(f"UI Error: Parsing computation methods failed - {str(e)}")
+        else:
+            st.warning("Please upload an RBS ARXML file to view computation methods.")
+
     # Clean up temporary files
     if os.path.exists(service_path):
         os.unlink(service_path)
@@ -191,4 +233,3 @@ if service_file or rbs_file:
 
 else:
     st.info("Upload ARXML files to begin parsing and generating metadata.")
-
